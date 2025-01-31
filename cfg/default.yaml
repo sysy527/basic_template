@@ -1,0 +1,35 @@
+# 함수 넣지마 큰 변수 데이터 로더같은거 넣지말기 클래스 자체를 
+
+mode : train
+dir_data : "/home/seyeon/datasets/"
+name_data : 'cifar-10'
+model_name : 'ResNet18'
+
+dataset:
+  image_dim : 2
+  mode : train
+  dir_data : "/home/seyeon/datasets/"
+  name_data : 'cifar-10'
+  model_name : 'ResNet18'
+  
+train:
+  num_epoch : 2
+  batch_size : 64
+  
+  dir_checkpoint : ./checkpoints
+  dir_log : ./log
+  scope : classifier
+  num_freq_save : 1
+
+created_model:
+
+  lr : 0.0001
+  model_name : 'ResNet18'
+  nch_in : 1
+  nch_out : 10
+
+
+  
+  
+
+
