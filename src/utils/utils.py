@@ -20,7 +20,7 @@ class Parser:
     def write_args(self):
         params_dict = vars(self.__args)
 
-        log_dir = os.path.join(params_dict['train.dir_log'], params_dict['train.scope'])
+        log_dir = os.path.join(params_dict['train.dir_log'])
         args_name = os.path.join(log_dir, 'args.txt')
 
         if not os.path.exists(log_dir):
@@ -61,8 +61,40 @@ def build_settings(cfg):
     loss_fn = nn.CrossEntropyLoss().to(device)
     params = net.parameters()
     optim = torch.optim.Adam(params, lr = cfg["lr"])
+    print(net)
     
     return net, optim, loss_fn
+
+def build_settings_segmentation(cfg):
+    cfg = cfg["created_model"]
+    device = torch.device("cuda:3" if torch.cuda.is_available() else "cpu")
+    
+    model_class = MODEL_CLASSES[cfg["model_name"]]
+    net = model_class().to(device)
+    
+    ########################### isbi ###############################
+    '''
+    loss_fn = nn.BCEWithLogitsLoss().to(device)
+    '''
+    
+    #### ver2. output channel 21 -> softmax 적용하지 않음. CE에서 나부적으로 softmax 적용됨
+    '''
+    loss_fn = nn.CrossEntropyLoss(ignore_index = 255).to(device)
+    '''
+
+    #### ver1, ver3. output channel 21 -> softmax 적용하지 않음.
+   
+    loss_fn = nn.NLLLoss().to(device)
+
+
+    params = net.parameters()
+    optim = torch.optim.Adam(params, lr = cfg["lr"])
+    
+    #print(net)
+    
+    return net, optim, loss_fn
+
+
 
 
 

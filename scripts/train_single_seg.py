@@ -3,6 +3,8 @@ import torch
 import numpy as np 
 
 import torch.nn as nn
+import torch.nn.functional as F
+
 from torch.utils.tensorboard import SummaryWriter
 
 
@@ -24,15 +26,19 @@ class Trainer:
         self.dir_chck = os.path.join(self.dir_checkpoint, self.scope, self.name_data, self.model_name)
         self.dir_log = os.path.join(self.dir_log, self.scope, self.name_data, self.model_name)
         self.data_filepath = os.path.join(self.dir_data, self.name_data, self.mode)
+        
+        self.fn_tonumpy = lambda x: x.to('cpu').detach().numpy().transpose(0, 2, 3, 1)
+        self.fn_denorm = lambda x, mean, std: (x * std) + mean
+        # self.fn_class = lambda x: 1.0 * (x > 0.5)                             # BCEwithlogitLoss
+        self.fn_class = lambda x: torch.argmax(x, dim=1, keepdim=True).float()  # softmax(2) -> cross entropyloss
+
     
     
-    def train_one_epoch(self, epoch, loader_train, net, optim, loss_fn):
+    def train_one_epoch(self, epoch, loader_train, net, optim, loss_fn, writer_train):
         num_batch_train = len(loader_train)
-
+        
         net.train()
-
         loss_train = []
-        pred_train = []
 
         for i, batch in enumerate(loader_train, 1):
             def should(freq):
@@ -42,22 +48,31 @@ class Trainer:
             label = batch['label'].to(self.device)
 
             output = net(input)
-            pred = torch.softmax(output, dim=1).max(dim=1, keepdim=True)[1]
+            # output =  F.log_softmax(output, dim=1)  # NLL loss - log softmax이 입력값이어야
 
             # backward netD
             optim.zero_grad()
 
-            loss = loss_fn(output, label)
+            #loss = loss_fn(output, label)  # BCEwithLogitLoss
+            loss = loss_fn(output, label.squeeze(1).long()) # softmax(2), NLL LOSS
+            
             loss.backward()
             optim.step()
 
             # get losses
             loss_train += [loss.item()]
-            pred_train += [((pred == label.view_as(pred)).type(torch.float)).mean(dim=0).item()]
 
-            print('TRAIN: EPOCH %d: BATCH %04d/%04d: LOSS: %.4f ACC: %.4f' %(epoch, i, num_batch_train, np.mean(loss_train), 100 * np.mean(pred_train)))
+            print('TRAIN: EPOCH %d: BATCH %04d/%04d: LOSS: %.4f' %(epoch, i, num_batch_train, np.mean(loss_train)))
             
-        return np.mean(loss_train), np.mean(pred_train)
+            label_np = self.fn_tonumpy(label)
+            input_np = self.fn_tonumpy(self.fn_denorm(input, mean=0.5, std=0.5))
+            output_np = self.fn_tonumpy(self.fn_class(output))
+ 
+            writer_train.add_image('label', label_np, num_batch_train * (epoch - 1) + i, dataformats='NHWC')
+            writer_train.add_image('input', input_np, num_batch_train * (epoch - 1) + i, dataformats='NHWC')
+            writer_train.add_image('output', output_np, num_batch_train * (epoch - 1) + i, dataformats='NHWC')
+            
+        return np.mean(loss_train)
     
     def val_one_batch(self, batch, net, loss_fn):
 
@@ -70,19 +85,15 @@ class Trainer:
 
         with torch.no_grad(): 
             output = net(input)
-            pred = torch.softmax(output, dim=1).max(dim=1, keepdim=True)[1]
-
             # Calculate loss
-            loss = loss_fn(output, label)
+            #loss = loss_fn(output, label)
+            loss = loss_fn(output, label.squeeze(1).long())
 
-            # Calculate accuracy
-            acc = ((pred == label.view_as(pred)).type(torch.float)).mean(dim=0).item()
 
-        return loss.item(), acc
+        return loss.item(), output
 
         
     def train(self, loader_train, loader_val, net, optim, loss_fn):
-        
         dir_chck = os.path.join(self.dir_checkpoint, self.scope, self.name_data, self.model_name)
         ## setup tensorboard
         writer_train = SummaryWriter(log_dir=os.path.join(self.dir_log,'train'))
@@ -91,27 +102,33 @@ class Trainer:
         st_epoch = 0
         for epoch in range(st_epoch + 1, self.num_epoch + 1):
             
-            loss_train, pred_train = self.train_one_epoch(epoch, loader_train, net, optim, loss_fn)
+            loss_train = self.train_one_epoch(epoch, loader_train, net, optim, loss_fn, writer_train)
+            
             writer_train.add_scalar('loss', np.mean(loss_train), epoch)
-            writer_train.add_scalar('acc', np.mean(pred_train), epoch)
             
             with torch.no_grad():
                 num_batch_val = len(loader_val)
                 net.eval()
                 loss_val = []
-                pred_val = []
                 
                 for i, batch in enumerate(loader_val, 1):
-                    loss, acc = self.val_one_batch(batch, net, loss_fn)
+                    loss, output = self.val_one_batch(batch, net, loss_fn)
                     
                     loss_val.append(loss)
-                    pred_val.append(acc)
 
-                    print('VALID: EPOCH %d: BATCH %04d/%04d: LOSS: %.4f ACC: %.4f' %
-                        (epoch, i, num_batch_val, np.mean(loss_val), 100 * np.mean(pred_val)))
+                    print('VALID: EPOCH %d: BATCH %04d/%04d: LOSS: %.4f' %(epoch, i, num_batch_val, np.mean(loss_val)))
+                    
+                    label_np = self.fn_tonumpy(batch['label'])
+                    input_np = self.fn_tonumpy(self.fn_denorm(batch['image'], mean=0.5, std=0.5))
+                    output_np = self.fn_tonumpy(self.fn_class(output))
+
+                    writer_val.add_image('label', label_np, num_batch_val * (epoch - 1) + i, dataformats='NHWC')
+                    writer_val.add_image('input', input_np, num_batch_val * (epoch - 1) + i, dataformats='NHWC')
+                    writer_val.add_image('output', output_np, num_batch_val * (epoch - 1) + i, dataformats='NHWC')
+                    
                     
             writer_val.add_scalar('loss', np.mean(loss_val), epoch)
-            writer_val.add_scalar('acc', np.mean(pred_val), epoch)
+       
             
             ## save
             #if (epoch % self.num_freq_save) == 0:
@@ -166,16 +183,14 @@ class Trainer:
             net.eval()
 
             loss_test = []
-            pred_test = []
 
             for i, batch in enumerate(loader_test, 1):
-                loss, acc = self.val_one_batch(batch, net, loss_fn)
+                loss, output = self.val_one_batch(batch, net, loss_fn)
                     
                 loss_test.append(loss)
-                pred_test.append(acc)
 
-                print('TEST: BATCH %04d/%04d: LOSS: %.4f ACC: %.4f' % (i, num_batch_test, np.mean(loss_test), 100 * np.mean(pred_test)))
+                print('TEST: BATCH %04d/%04d: LOSS: %.4f' % (i, num_batch_test, np.mean(loss_test)))
 
             print('TEST: AVERAGE LOSS: %.6f' % (np.mean(loss_test)))
-            print('TEST: AVERAGE ACC: %.6f' % (100 * np.mean(pred_test)))
+   
 
