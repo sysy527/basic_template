@@ -37,7 +37,7 @@ class VGG16(nn.Module):
         
         # Fully connected layers
         self.classifier = nn.Sequential(
-            nn.Linear(512, 4096), nn.ReLU(), nn.Dropout(),                      # [4096]
+            nn.Linear(512*7*7, 4096), nn.ReLU(), nn.Dropout(),                      # [4096]
             nn.Linear(4096, 4096), nn.ReLU(), nn.Dropout(),                     # [4096]
             nn.Linear(4096, self.nch_out)                                       # [10]
         )
@@ -363,25 +363,25 @@ class UNet(nn.Module):
         self.dec5_1 = CBR2d(in_channels=1024, out_channels=512)
 
         self.unpool4 = nn.ConvTranspose2d(in_channels=512, out_channels=512,
-                                          kernel_size=2, stride=2, padding=0, bias=True)
+                                        kernel_size=2, stride=2, padding=0, bias=True)
 
         self.dec4_2 = CBR2d(in_channels=2 * 512, out_channels=512)
         self.dec4_1 = CBR2d(in_channels=512, out_channels=256)
 
         self.unpool3 = nn.ConvTranspose2d(in_channels=256, out_channels=256,
-                                          kernel_size=2, stride=2, padding=0, bias=True)
+                                        kernel_size=2, stride=2, padding=0, bias=True)
 
         self.dec3_2 = CBR2d(in_channels=2 * 256, out_channels=256)
         self.dec3_1 = CBR2d(in_channels=256, out_channels=128)
 
         self.unpool2 = nn.ConvTranspose2d(in_channels=128, out_channels=128,
-                                          kernel_size=2, stride=2, padding=0, bias=True)
+                                        kernel_size=2, stride=2, padding=0, bias=True)
 
         self.dec2_2 = CBR2d(in_channels=2 * 128, out_channels=128)
         self.dec2_1 = CBR2d(in_channels=128, out_channels=64)
 
         self.unpool1 = nn.ConvTranspose2d(in_channels=64, out_channels=64,
-                                          kernel_size=2, stride=2, padding=0, bias=True)
+                                        kernel_size=2, stride=2, padding=0, bias=True)
 
         self.dec1_2 = CBR2d(in_channels=2 * 64, out_channels=64)
         self.dec1_1 = CBR2d(in_channels=64, out_channels=64)
@@ -432,14 +432,285 @@ class UNet(nn.Module):
 
         x = self.fc(dec1_1)
         
-        ### ver2
-        # softmax 생략
-        
-        ### ver3
-        '''
-        #x = self.softmax(x)
-        '''
         return x
     
 
+
+import torch
+import torch.nn as nn
+from torchvision.models import vgg16_bn
+
+def conv(in_channels, out_channels):
+    return nn.Sequential(
+        nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1),
+        nn.BatchNorm2d(out_channels),
+        nn.ReLU(inplace=True)
+    )
+
+
+def up_conv(in_channels, out_channels):
+    return nn.Sequential(
+        nn.ConvTranspose2d(in_channels, out_channels, kernel_size=2, stride=2),
+        nn.ReLU(inplace=True)
+    )
+
+
+class UNet_preEncoder(nn.Module):
+    def __init__(self, pretrained=True, out_channels=21):
+        super().__init__()
+
+
+        self.encoder = vgg16_bn(pretrained=pretrained).features
+        self.block1 = nn.Sequential(*self.encoder[:6])
+        self.block2 = nn.Sequential(*self.encoder[6:13])
+        self.block3 = nn.Sequential(*self.encoder[13:20])
+        self.block4 = nn.Sequential(*self.encoder[20:27])
+        self.block5 = nn.Sequential(*self.encoder[27:34])
+
+        self.bottleneck = nn.Sequential(*self.encoder[34:])
+        self.conv_bottleneck = conv(512, 1024)
+
+
+        self.up_conv6 = up_conv(1024, 512)
+        self.conv6 = conv(512 + 512, 512)
+        self.up_conv7 = up_conv(512, 256)
+        self.conv7 = conv(256 + 512, 256)
+        self.up_conv8 = up_conv(256, 128)
+        self.conv8 = conv(128 + 256, 128)
+        self.up_conv9 = up_conv(128, 64)
+        self.conv9 = conv(64 + 128, 64)
+        self.up_conv10 = up_conv(64, 32)
+        self.conv10 = conv(32 + 64, 32)
+        self.conv11 = nn.Conv2d(32, out_channels, kernel_size=1)
+        
+    def forward(self, x):
+        block1 = self.block1(x)
+        block2 = self.block2(block1)
+        block3 = self.block3(block2)
+        block4 = self.block4(block3)
+        block5 = self.block5(block4)
+
+
+        bottleneck = self.bottleneck(block5)
+        x = self.conv_bottleneck(bottleneck)
+
+
+        x = self.up_conv6(x)
+        x = torch.cat([x, block5], dim=1)
+        x = self.conv6(x)
+
+
+        x = self.up_conv7(x)
+        x = torch.cat([x, block4], dim=1)
+        x = self.conv7(x)
+
+
+        x = self.up_conv8(x)
+        x = torch.cat([x, block3], dim=1)
+        x = self.conv8(x)
+
+
+        x = self.up_conv9(x)
+        x = torch.cat([x, block2], dim=1)
+        x = self.conv9(x)
+
+
+        x = self.up_conv10(x)
+        x = torch.cat([x, block1], dim=1)
+        x = self.conv10(x)
+
+
+        x = self.conv11(x)
+
+        return x
+
+class DECBR2d(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=2, padding=1, output_padding=1, bias=True, norm="bnorm", relu=0.0):
+        super().__init__()
+
+        layers = []
+        # layers += [nn.ReflectionPad2d(padding=padding)]
+        layers += [nn.ConvTranspose2d(in_channels=in_channels, out_channels=out_channels,
+                                      kernel_size=kernel_size, stride=stride, padding=padding, output_padding=output_padding,
+                                      bias=bias)]
+
+        if not norm is None:
+            if norm == "bnorm":
+                layers += [nn.BatchNorm2d(num_features=out_channels)]
+            elif norm == "inorm":
+                layers += [nn.InstanceNorm2d(num_features=out_channels)]
+
+        if not relu is None and relu >= 0.0:
+            layers += [nn.ReLU() if relu == 0 else nn.LeakyReLU(relu)]
+
+        self.cbr = nn.Sequential(*layers)
+
+    def forward(self, x):
+        return self.cbr(x)
+
+
+class CBR2d(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, padding_mode='reflection', bias=True, norm="bnorm", relu=0.0):
+        super().__init__()
+
+        layers = []
+
+        if padding_mode == 'reflection':
+            layers += [nn.ReflectionPad2d(padding)]
+        elif padding_mode == 'replication':
+            layers += [nn.ReplicationPad2d(padding)]
+        elif padding_mode == 'constant':
+            value = 0
+            layers += [nn.ConstantPad2d(padding, value)]
+        elif padding_mode == 'zeros':
+            layers += [nn.ZeroPad2d(padding)]
+
+        layers += [nn.Conv2d(in_channels=in_channels, out_channels=out_channels,
+                             kernel_size=kernel_size, stride=stride, padding=0,
+                             bias=bias)]
+
+        if not norm is None:
+            if norm == "bnorm":
+                layers += [nn.BatchNorm2d(num_features=out_channels)]
+            elif norm == "inorm":
+                layers += [nn.InstanceNorm2d(num_features=out_channels)]
+
+        if not relu is None and relu >= 0.0:
+            layers += [nn.ReLU() if relu == 0 else nn.LeakyReLU(relu)]
+
+        self.cbr = nn.Sequential(*layers)
+
+    def forward(self, x):
+        return self.cbr(x)
     
+class ResBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=True, norm="bnorm", relu=0.0):
+        super().__init__()
+
+        layers = []
+
+        # 1st conv
+        layers += [CBR2d(in_channels=in_channels, out_channels=out_channels,
+                         kernel_size=kernel_size, stride=stride, padding=padding,
+                         bias=bias, norm=norm, relu=relu)]
+
+        # 2nd conv
+        layers += [CBR2d(in_channels=out_channels, out_channels=out_channels,
+                         kernel_size=kernel_size, stride=stride, padding=padding,
+                         bias=bias, norm=norm, relu=None)]
+
+        self.resblk = nn.Sequential(*layers)
+
+    def forward(self, x):
+        return x + self.resblk(x)
+
+
+class Generator(nn.Module):
+    def __init__(self, in_channels, out_channels, nker=64, norm="bnorm"):
+        super(Generator, self).__init__()
+
+        self.dec1 = DECBR2d(1 * in_channels, 4 * nker, kernel_size=4, stride=1,
+                            padding=0, norm=norm, relu=0.0, bias=False)
+
+        self.dec2 = DECBR2d(4 * nker, 2 * nker, kernel_size=4, stride=2,
+                            padding=1, norm=norm, relu=0.0, bias=False)
+
+        self.dec3 = DECBR2d(2 * nker, 1 * nker, kernel_size=4, stride=2,
+                            padding=1, norm=norm, relu=0.0, bias=False)
+        
+        self.dec4 = DECBR2d(1 * nker, out_channels , kernel_size=4, stride=2,
+                            padding=1, norm=None, relu=None, bias=False)
+        '''
+        self.dec4 = DECBR2d(2 * nker, 1 * nker , kernel_size=4, stride=2,
+                            padding=1, norm=norm, relu=0.0, bias=False)
+
+        self.dec5 = DECBR2d(1 * nker,out_channels, kernel_size=4, stride=2,
+                            padding=1, norm=None, relu=None, bias=False)
+        '''
+    def forward(self, x):
+
+        x = self.dec1(x)
+        x = self.dec2(x)
+        x = self.dec3(x)
+        x = self.dec4(x)
+        #x = self.dec5(x)
+        x = torch.tanh(x)
+
+        return x
+
+class Discriminator(nn.Module):
+    def __init__(self, in_channels, out_channels, nker=64, norm="bnorm"):
+        super(Discriminator, self).__init__()
+
+        self.enc1 = CBR2d(1 * in_channels, 1 * nker, kernel_size=4, stride=2,
+                          padding=1, norm=None, relu=0.2, bias=False)
+
+        self.enc2 = CBR2d(1 * nker, 2 * nker, kernel_size=4, stride=2,
+                          padding=1, norm=norm, relu=0.2, bias=False)
+
+        self.enc3 = CBR2d(2 * nker, 4 * nker, kernel_size=4, stride=2,
+                          padding=1, norm=norm, relu=0.2, bias=False)
+
+        self.enc4 = CBR2d(4 * nker, 8 * nker, kernel_size=4, stride=2,
+                          padding=1, norm=norm, relu=0.2, bias=False)
+
+        self.enc5 = CBR2d(8 * nker, out_channels, kernel_size=4, stride=1,
+                          padding=1, norm=None, relu=None, bias=False)
+
+    def forward(self, x):
+
+        x = self.enc1(x) # torch.Size([4, 64, 128, 128])
+        x = self.enc2(x) # torch.Size([4, 128, 64, 64])
+        x = self.enc3(x) # torch.Size([4, 256, 32, 32])
+        x = self.enc4(x) # torch.Size([4, 512, 16, 16])
+        x = self.enc5(x) # torch.Size([4, 1, 15, 15]) 
+
+        x = torch.sigmoid(x)
+
+        return x
+    
+class CycleGAN(nn.Module):
+    def __init__(self, in_channels, out_channels, nker=64, norm='bnorm', nblk=6):
+        super(CycleGAN, self).__init__()
+
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.nker = nker
+        self.norm = norm
+        self.nblk = nblk
+
+        if norm == 'bnorm':
+            self.bias = False
+        else:
+            self.bias = True
+
+        self.enc1 = CBR2d(self.in_channels, 1 * self.nker, kernel_size=7, stride=1, padding=3, norm=self.norm, relu=0.0)
+        self.enc2 = CBR2d(1 * self.nker, 2 * self.nker, kernel_size=3, stride=2, padding=1, norm=self.norm, relu=0.0)
+        self.enc3 = CBR2d(2 * self.nker, 4 * self.nker, kernel_size=3, stride=2, padding=1, norm=self.norm, relu=0.0)
+
+        if self.nblk:
+            res = []
+
+            for i in range(self.nblk):
+                res += [ResBlock(4 * self.nker, 4 * self.nker, kernel_size=3, stride=1, padding=1, norm=self.norm, relu=0.0)]
+
+            self.res = nn.Sequential(*res)
+
+        self.dec3 = DECBR2d(4 * self.nker, 2 * self.nker, kernel_size=3, stride=2, padding=1, norm=self.norm, relu=0.0)
+        self.dec2 = DECBR2d(2 * self.nker, 1 * self.nker, kernel_size=3, stride=2, padding=1, norm=self.norm, relu=0.0)
+        self.dec1 = CBR2d(1 * self.nker, self.out_channels, kernel_size=7, stride=1, padding=3, norm=None, relu=None)
+
+    def forward(self, x):
+        x = self.enc1(x)
+        x = self.enc2(x)
+        x = self.enc3(x)
+
+        x = self.res(x)
+
+        x = self.dec3(x)
+        x = self.dec2(x)
+        x = self.dec1(x)
+
+        x = torch.tanh(x)
+
+        return x

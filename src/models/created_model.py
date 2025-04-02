@@ -8,4 +8,9 @@ MODEL_CLASSES = {"VGG16" : VGG16,
                  "ResNet101": Model_ResNet().resnet101,
                  "ResNet152": Model_ResNet().resnet152,
                  "Plain34_wRes":Model_PlainNet().plain34,
-                 "UNet" : UNet}
+                 "UNet" : UNet,
+                 "UNet_preEncoder" : UNet_preEncoder,
+                 "Generator" : Generator,
+                 "Discriminator" : Discriminator,
+                 "CycleGan" : CycleGAN
+                 }

@@ -1,37 +1,46 @@
 # 함수 넣지마 큰 변수 데이터 로더같은거 넣지말기 클래스 자체를 
 
 mode : train
-dir_data : "/home/suhohan/seyeon/datasets/"
-name_data : 'pascalVOC2012' #'preprocessed' #'isbi' #"isbi" #'cifar-10' 
-model_name : 'UNet'
+dir_data : "/disk2/seyeon/datasets"
+name_data : 'monet2photo'  # 'monet2photo' #'cifar-10' #'preprocessed' #'isbi' #"isbi"
+model_name : 'VGG16' # 'CycleGan_mse'
+device : 'cuda:0'
 
 dataset:
   image_dim : 2
   mode : train
-  dir_data : "/home/suhohan/seyeon/datasets"
-  name_data : 'pascalVOC2012'
-  model_name : 'UNet'
+  dir_data : "/disk2/seyeon/datasets"
+  name_data : 'monet2photo'
+  model_name : 'VGG16' #'CycleGan_mse' #'UNet_preEncoder'
   
 train:
-  num_epoch : 140
-  batch_size : 32
+  num_epoch : 300
+  batch_size : 64 #monet:4
   
   dir_checkpoint : ./checkpoints
   dir_log : ./log
   dir_result: ./result
-  scope : segmentation
-  num_freq_save : 50
+  scope : classifier #generation
+  num_freq_save : 10
+  train_continue : 'False'
+  device : 'cuda:0'
+
+  #cyclegan
+  #lambda_cyc : 1e1
+  #lambda_id: 5e-1
 
 created_model:
 
-  lr : 0.0001
-  model_name : 'UNet'
+  lr : 0.0001 #monet : 0.0002
+  model_name :  'VGG16' # 'CycleGan_mse' #'UNet_preEncoder'
   nch_in : 1
   nch_out : 10
-  gpu_id : 2
+  device : 0
+  nker : 64
+  
 
-  ## softmax -2class or bce or nllloss 
-  # 
+  
+  
 
 
   
